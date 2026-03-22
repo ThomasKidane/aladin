@@ -1,6 +1,6 @@
 # Aladin — AI Financial Literacy Companion
 
-A Chrome browser extension that understands any webpage you're browsing and provides real-time, personalized financial guidance — powered by [OpenClaw](https://openclawlab.com) and Claude.
+A Chrome browser extension that understands any webpage you're browsing and provides real-time, personalized financial guidance — powered by [Google Gemini](https://ai.google.dev).
 
 > *Built for the HackDuke "Code for Good" 2026 Finance Track.*
 
@@ -20,11 +20,11 @@ A Chrome browser extension that understands any webpage you're browsing and prov
 
 ```
 Chrome Extension (Manifest V3)
-├── background.js          — Service worker, OpenClaw + Auth0 handlers
+├── background.js          — Service worker, Gemini + Auth0 handlers
 ├── config.js              — Server URL configuration
 ├── scripts/
 │   ├── auth0.js           — Auth0 PKCE authentication flow
-│   ├── openclaw.js        — OpenClaw API integration layer
+│   ├── openclaw.js        — OpenClaw API integration layer (legacy)
 │   ├── accessibilityTree.js — Structured page understanding
 │   └── agentVisualIndicator.js — Visual feedback during agent actions
 ├── content-scripts/
@@ -33,8 +33,8 @@ Chrome Extension (Manifest V3)
 
 Server (Node.js + Express)
 ├── Auth0 JWT validation   — Verifies tokens from the extension
-├── OpenClaw proxy         — Routes AI requests to the gateway
-├── Bedrock vision         — Handles screenshot/image analysis
+├── Gemini API             — Streams AI responses via Gemini 2.5 Flash
+├── Vision support         — Handles screenshot/image analysis (multimodal)
 └── Chat persistence       — In-memory message storage
 ```
 
@@ -45,7 +45,7 @@ Server (Node.js + Express)
 - Node.js >= 18
 - Chrome browser
 - An [Auth0](https://auth0.com) account (free tier works)
-- An OpenClaw Gateway instance (or access to one)
+- A [Google AI Studio](https://aistudio.google.com/) API key (free tier available)
 
 ### 1. Clone and install
 
@@ -78,19 +78,11 @@ npm install
 
 ### 3. Configure the server
 
-Edit `.env` with your OpenClaw Gateway details:
+Edit `.env` with your Gemini API key:
 
 ```
-OPENCLAW_GATEWAY=http://127.0.0.1:18789
-OPENCLAW_GATEWAY_TOKEN=your-token-here
-```
-
-For screenshot/vision support, add AWS Bedrock credentials:
-
-```
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your-key
-AWS_SECRET_ACCESS_KEY=your-secret
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 ### 4. Configure the extension
@@ -173,12 +165,9 @@ For production, deploy the server behind HTTPS (e.g., with Caddy):
 
 ```
 your-domain.com {
-    reverse_proxy /api/* 127.0.0.1:3001 {
+    reverse_proxy 127.0.0.1:3001 {
         flush_interval -1
     }
-    reverse_proxy /v1/* 127.0.0.1:18789
-    reverse_proxy /tools/* 127.0.0.1:18789
-    reverse_proxy 127.0.0.1:3001
 }
 ```
 
@@ -186,7 +175,7 @@ your-domain.com {
 
 - **Extension**: Chrome Manifest V3, React (side panel), Auth0 PKCE
 - **Server**: Node.js, Express, JSON Web Token validation
-- **AI**: OpenClaw Gateway, AWS Bedrock (Claude), Responses API
+- **AI**: Google Gemini 2.5 Flash (streaming, multimodal vision)
 - **Auth**: Auth0 (Authorization Code Flow with PKCE)
 
 ## License

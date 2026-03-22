@@ -6,9 +6,10 @@ const jwksClient = require("jwks-rsa");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-const OPENCLAW_GATEWAY = process.env.OPENCLAW_GATEWAY || "http://127.0.0.1:18789";
-const OPENCLAW_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
-const OPENCLAW_AGENT_ID = process.env.OPENCLAW_AGENT_ID || "main";
+// ─── Gemini Configuration ─────────────────────────────────────────────
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 // ─── Auth0 Configuration ─────────────────────────────────────────────
 const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN || "";
@@ -118,7 +119,90 @@ app.get("/dex-version.json", (req, res) => {
   res.json({ version: "1.0.0", breakingMinVersion: "0.0.1" });
 });
 
-// ─── AI Chat (stream through OpenClaw) ───────────────────────────────
+// ─── Gemini API Helper ───────────────────────────────────────────────
+
+async function geminiStreamChat(systemPrompt, conversationHistory, images) {
+  const contents = [];
+
+  // Add conversation history in Gemini format
+  for (const msg of conversationHistory) {
+    const role = msg.role === "assistant" ? "model" : "user";
+    contents.push({ role, parts: [{ text: msg.content }] });
+  }
+
+  // Handle image inputs
+  if (images && images.length > 0) {
+    const lastContent = contents[contents.length - 1];
+    for (const imgUrl of images) {
+      const match = imgUrl.match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/);
+      if (match) {
+        lastContent.parts.push({
+          inline_data: { mime_type: `image/${match[1]}`, data: match[2] },
+        });
+      }
+    }
+  }
+
+  const body = {
+    contents,
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 8192,
+    },
+  };
+
+  const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Gemini API error ${response.status}: ${errText}`);
+  }
+
+  return response;
+}
+
+async function geminiChat(systemPrompt, conversationHistory) {
+  const contents = [];
+
+  for (const msg of conversationHistory) {
+    const role = msg.role === "assistant" ? "model" : "user";
+    contents.push({ role, parts: [{ text: msg.content }] });
+  }
+
+  const body = {
+    contents,
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 8192,
+    },
+  };
+
+  const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Gemini API error ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+// ─── AI Chat (stream through Gemini) ─────────────────────────────────
 const chatMessages = new Map();
 
 function buildSystemPrompt(pageContext) {
@@ -139,14 +223,11 @@ PERSONALITY:
 - Be proactive: if you see something concerning on a page, flag it
 - Always empower users with knowledge, never just tell them what to do
 
-IMPORTANT: Respond ONLY in the side panel chat. Do NOT type into the webpage.
-
 FORMATTING RULES:
 - Use **bold** for emphasis and important terms
 - Use markdown headers (##, ###) to organize long responses
 - Use bullet points and numbered lists for collections of items
 - Use tables when presenting structured data (great for comparing financial products)
-- Use \`code\` for technical terms, filenames, and commands
 - Use > blockquotes for important warnings about predatory terms or red flags
 - Add blank lines between sections for readability
 - When analyzing financial products, always include a simple PROS/CONS breakdown`;
@@ -221,13 +302,12 @@ app.post("/api/ai/chat", authMiddleware, async (req, res) => {
 
     const systemPrompt = buildSystemPrompt(pageContext);
 
-    // Build Responses API input
-    const responsesInput = [];
+    const conversationHistory = [];
     for (const m of stored) {
       if (m.role === "user" && m.content) {
-        responsesInput.push({ role: "user", content: m.content });
+        conversationHistory.push({ role: "user", content: m.content });
       } else if (m.role === "assistant" && m.content) {
-        responsesInput.push({ role: "assistant", content: m.content });
+        conversationHistory.push({ role: "assistant", content: m.content });
       }
     }
 
@@ -245,7 +325,6 @@ app.post("/api/ai/chat", authMiddleware, async (req, res) => {
       return `data: ${JSON.stringify({ type, properties: props })}\n\n`;
     }
 
-    // Send initial message structure
     res.write(
       sse("message.updated", {
         message: {
@@ -264,77 +343,9 @@ app.post("/api/ai/chat", authMiddleware, async (req, res) => {
 
     await new Promise((r) => setTimeout(r, 500));
 
-    // Handle vision requests via Bedrock
-    if (images.length > 0 && process.env.AWS_ACCESS_KEY_ID) {
-      const { BedrockRuntimeClient, ConverseStreamCommand } = require("@aws-sdk/client-bedrock-runtime");
-      const bedrock = new BedrockRuntimeClient({
-        region: process.env.AWS_REGION || "us-east-1",
-        credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-        },
-      });
+    const geminiRes = await geminiStreamChat(systemPrompt, conversationHistory, images.length > 0 ? images : null);
 
-      const contentBlocks = [];
-      for (const imgUrl of images) {
-        const match = imgUrl.match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/);
-        if (match) {
-          contentBlocks.push({
-            image: { format: match[1] === "jpg" ? "jpeg" : match[1], source: { bytes: Buffer.from(match[2], "base64") } },
-          });
-        }
-      }
-      contentBlocks.push({ text: userText || "What do you see in this image?" });
-
-      const cmd = new ConverseStreamCommand({
-        modelId: "us.anthropic.claude-opus-4-6-v1",
-        messages: [{ role: "user", content: contentBlocks }],
-        system: [{ text: systemPrompt }],
-      });
-
-      const response = await bedrock.send(cmd);
-      let fullText = "";
-      for await (const event of response.stream) {
-        if (event.contentBlockDelta?.delta?.text) {
-          const chunk = event.contentBlockDelta.delta.text;
-          fullText += chunk;
-          res.write(sse("message.part.updated", { chatId, messageId: assistantMsgId, part: { id: textPartId, type: "text", text: fullText } }));
-        }
-      }
-
-      res.write(sse("message.part.updated", { chatId, messageId: assistantMsgId, part: { id: toolPartId, type: "tool", tool: "Done", state: "step-finish" } }));
-      stored.push({ id: assistantMsgId, role: "assistant", content: fullText, parts: [{ type: "text", text: fullText }], created_at: new Date().toISOString() });
-      res.end();
-      return;
-    }
-
-    // Standard text: use OpenClaw Responses API
-    const body = {
-      model: "openclaw",
-      instructions: systemPrompt,
-      input: responsesInput,
-      stream: true,
-    };
-
-    const ocRes = await fetch(`${OPENCLAW_GATEWAY}/v1/responses`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENCLAW_TOKEN}`,
-        "x-openclaw-agent-id": OPENCLAW_AGENT_ID,
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!ocRes.ok) {
-      const errText = await ocRes.text();
-      console.error("OpenClaw error:", ocRes.status, errText);
-      res.write(sse("error", { error: { message: `AI service error: ${ocRes.status}`, type: "server_error" } }));
-      res.end();
-      return;
-    }
-
-    const reader = ocRes.body.getReader();
+    const reader = geminiRes.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
@@ -351,12 +362,12 @@ app.post("/api/ai/chat", authMiddleware, async (req, res) => {
       for (const line of lines) {
         if (!line.startsWith("data: ")) continue;
         const data = line.slice(6).trim();
-        if (data === "[DONE]") continue;
+        if (!data) continue;
         try {
           const ev = JSON.parse(data);
-
-          if (ev.type === "response.output_text.delta" && ev.delta) {
-            fullText += ev.delta;
+          const text = ev.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) {
+            fullText += text;
             res.write(sse("message.part.updated", { chatId, messageId: assistantMsgId, part: { id: textPartId, type: "text", text: fullText } }));
 
             if (!labelSent && fullText.length > 40) {
@@ -364,13 +375,6 @@ app.post("/api/ai/chat", authMiddleware, async (req, res) => {
               res.write(sse("message.part.updated", { chatId, messageId: assistantMsgId, part: { id: toolPartId, type: "tool", tool: label, state: "input-streaming" } }));
               labelSent = true;
             }
-          }
-
-          // Handle chat-completions fallback format
-          if (ev.choices?.[0]?.delta?.content) {
-            const delta = ev.choices[0].delta.content;
-            fullText += delta;
-            res.write(sse("message.part.updated", { chatId, messageId: assistantMsgId, part: { id: textPartId, type: "text", text: fullText } }));
           }
         } catch {}
       }
@@ -394,27 +398,9 @@ app.post("/api/ai/chat", authMiddleware, async (req, res) => {
   }
 });
 
-// ─── AI Tool execution ───────────────────────────────────────────────
+// ─── AI Tool execution (stub — Gemini doesn't have OpenClaw tools) ───
 app.post("/api/ai/tool", authMiddleware, async (req, res) => {
-  try {
-    const ocRes = await fetch(`${OPENCLAW_GATEWAY}/tools/invoke`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENCLAW_TOKEN}`,
-      },
-      body: JSON.stringify({
-        tool: req.body.toolName || "sessions_list",
-        action: "json",
-        args: req.body.args || {},
-        sessionKey: "main",
-      }),
-    });
-    const data = await ocRes.json();
-    res.json(data);
-  } catch (err) {
-    res.json({ ok: false, error: err.message });
-  }
+  res.json({ ok: true, message: "Tool execution not available in Gemini mode" });
 });
 
 // ─── AI Suggestions ──────────────────────────────────────────────────
@@ -508,51 +494,17 @@ app.all("/api/{*path}", (req, res) => {
   res.json({ success: true });
 });
 
-// ─── OpenClaw gateway proxy (pass-through) ───────────────────────────
-app.all("/v1/{*path}", authMiddleware, async (req, res) => {
-  try {
-    const ocRes = await fetch(`${OPENCLAW_GATEWAY}${req.path}`, {
-      method: req.method,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENCLAW_TOKEN}`,
-        "x-openclaw-agent-id": req.headers["x-openclaw-agent-id"] || OPENCLAW_AGENT_ID,
-      },
-      body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body),
-    });
-    const data = await ocRes.text();
-    res.status(ocRes.status).type("application/json").send(data);
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
-});
-
-app.all("/tools/{*path}", authMiddleware, async (req, res) => {
-  try {
-    const ocRes = await fetch(`${OPENCLAW_GATEWAY}${req.path}`, {
-      method: req.method,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENCLAW_TOKEN}`,
-      },
-      body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body),
-    });
-    const data = await ocRes.text();
-    res.status(ocRes.status).type("application/json").send(data);
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
-});
-
-// ─── Files (serve OpenClaw workspace files) ──────────────────────────
+// ─── Files ───────────────────────────────────────────────────────────
 const path = require("path");
 const fs = require("fs");
-const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE || path.join(process.env.HOME || "/tmp", ".openclaw/workspace");
-if (fs.existsSync(WORKSPACE_DIR)) {
-  app.use("/files", express.static(WORKSPACE_DIR));
+const WORKSPACE_DIR = process.env.WORKSPACE_DIR || path.join(process.env.HOME || "/tmp", ".aladin/workspace");
+if (!fs.existsSync(WORKSPACE_DIR)) {
+  fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
 }
+app.use("/files", express.static(WORKSPACE_DIR));
 
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`Aladin API server running on http://127.0.0.1:${PORT}`);
+  console.log(`AI: Gemini (${GEMINI_MODEL}) — API key ${GEMINI_API_KEY ? "configured" : "MISSING (set GEMINI_API_KEY)"}`);
   console.log(`Auth0: ${AUTH0_ENABLED ? "enabled" : "disabled (set AUTH0_DOMAIN and AUTH0_AUDIENCE to enable)"}`);
 });
