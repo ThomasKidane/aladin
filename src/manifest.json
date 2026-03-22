@@ -1,0 +1,137 @@
+{
+  "manifest_version": 3,
+  "name": "Aladin",
+  "description": "Your AI financial literacy companion — understands any webpage and provides personalized financial guidance to help everyone make smarter money decisions",
+  "version": "1.0.0",
+  "icons": {
+    "16": "icon/16.png",
+    "32": "icon/32.png",
+    "48": "icon/48.png",
+    "96": "icon/96.png",
+    "128": "icon/128.png"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "history",
+    "sidePanel",
+    "activeTab",
+    "alarms",
+    "scripting",
+    "tabGroups",
+    "offscreen",
+    "identity"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:3001/*",
+      "http://localhost:18789/*",
+      "http://127.0.0.1:18789/*",
+      "http://localhost:3000/*"
+    ]
+  },
+  "optional_host_permissions": [],
+  "action": {
+    "default_title": "Aladin",
+    "default_icon": {
+      "16": "icon/16.png",
+      "32": "icon/32.png",
+      "48": "icon/48.png"
+    },
+    "default_popup": "popup.html"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://docs.google.com/document/*"
+      ],
+      "js": [
+        "scripts/gdocs.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "*://docs.google.com/spreadsheets/*"
+      ],
+      "js": [
+        "scripts/sheets.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "scripts/agentVisualIndicator.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "all_frames": false,
+      "js": [
+        "content-scripts/content.js"
+      ]
+    }
+  ],
+  "commands": {
+    "toggle-sidepanel": {
+      "suggested_key": {
+        "default": "Alt+J",
+        "mac": "Command+J"
+      },
+      "description": "Toggle the side panel"
+    },
+    "toggle-launcher": {
+      "suggested_key": {
+        "default": "Ctrl+E",
+        "mac": "Command+E"
+      },
+      "description": "Toggle the launcher"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "animations/*.riv",
+        "permission.html",
+        "recorder.html",
+        "fonts/*.woff2",
+        "scripts/*.js",
+        "scripts/**/*.js",
+        "pdfjs/web/**/*",
+        "pdfjs/build/**/*",
+        "sidepanel.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    },
+    {
+      "resources": [
+        "content-scripts/content.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

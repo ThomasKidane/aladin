@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<title>Aladin</title>
+  <script type="module" crossorigin src="/chunks/_virtual_wxt-html-plugins-DPbbfBKe.js"></script>
+</head>
+
+<body>
+	<script>
+		(async () => {
+			try {
+				const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+				// only needs permission so stop
+				stream.getTracks().forEach((t) => t.stop());
+				// informs extension bg listener
+				chrome.runtime?.sendMessage?.({ type: 'mic-permission-granted' });
+			} catch (err) {
+				// Send to parent with proper origin validation
+				const extensionOrigin = new URL(chrome.runtime.getURL("/")).origin;
+				window.parent.postMessage({ type: 'mic-fail', err: err?.name }, extensionOrigin);
+				chrome.runtime?.sendMessage?.({ type: 'mic-permission-denied' });
+			}
+		})();
+	</script>
+</body>
+
+</html>

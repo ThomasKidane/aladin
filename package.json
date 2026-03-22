@@ -1,0 +1,18 @@
+{
+  "name": "aladin",
+  "version": "1.0.0",
+  "description": "Aladin — AI-powered financial literacy companion browser extension",
+  "private": true,
+  "scripts": {
+    "server": "node server/server.js",
+    "server:dev": "node --watch server/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "jwks-rsa": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

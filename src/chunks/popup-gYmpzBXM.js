@@ -1,0 +1,1 @@
+import"./_virtual_wxt-html-plugins-DPbbfBKe.js";import{b as r}from"./chrome-CL5Qn6bg.js";r.tabs.query({active:!0,currentWindow:!0}).then(([e])=>{e?.id&&chrome.sidePanel.open({windowId:e.windowId,tabId:e.id})});

@@ -1,0 +1,19 @@
+<svg width="54" height="54" viewBox="0 0 54 54" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M0 27C0 12.0883 12.0883 0 27 0V0C41.9117 0 54 12.0883 54 27V27C54 41.9117 41.9117 54 27 54V54C12.0883 54 0 41.9117 0 27V27Z" fill="url(#paint0_radial_2625_7913)"/>
+<path d="Mnan nanL0 27C0 12.0883 12.0883 0 27 0Lnan nanLnan nanL27 0C41.9117 0 54 12.0883 54 27Lnan nanLnan nanL54 27C54 41.9117 41.9117 54 27 54Lnan nanLnan nanL27 54C12.0883 54 0 41.9117 0 27Lnan nanLnan nanZ" fill="url(#paint1_radial_2625_7913)"/>
+<path d="M0 27C0 12.0883 12.0883 0 27 0C41.9117 0 54 12.0883 54 27C54 41.9117 41.9117 54 27 54C12.0883 54 0 41.9117 0 27Z" fill="url(#paint2_radial_2625_7913)"/>
+<defs>
+<radialGradient id="paint0_radial_2625_7913" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(27 10.665) rotate(90) scale(58.0623 72.6958)">
+<stop stop-color="#74E2A9"/>
+<stop offset="1" stop-color="white"/>
+</radialGradient>
+<radialGradient id="paint1_radial_2625_7913" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(27 10.665) rotate(90) scale(58.0623 72.6958)">
+<stop stop-color="#74E2A9"/>
+<stop offset="1" stop-color="white"/>
+</radialGradient>
+<radialGradient id="paint2_radial_2625_7913" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(27 10.665) rotate(90) scale(58.0623 72.6958)">
+<stop stop-color="#74E2A9"/>
+<stop offset="1" stop-color="white"/>
+</radialGradient>
+</defs>
+</svg>

@@ -1,0 +1,1 @@
+@keyframes dash-move{to{stroke-dashoffset:-100}}.animated-dashed-border{stroke-dasharray:7 7;stroke-dashoffset:0;animation:dash-move 12s linear infinite;transition:stroke .3s ease}
