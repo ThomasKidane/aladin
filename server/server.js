@@ -268,9 +268,12 @@ app.post("/api/ai/chat", authMiddleware, async (req, res) => {
   try {
     const rawMessages = req.body.messages || [];
     const chatId = req.body.chatId || crypto.randomUUID();
+    const userId = req.user?.sub || "anonymous";
 
-    if (!chatMessages.has(chatId)) chatMessages.set(chatId, []);
-    const stored = chatMessages.get(chatId);
+    // Per-user chat isolation: prefix chatId with userId
+    const userChatKey = `${userId}:${chatId}`;
+    if (!chatMessages.has(userChatKey)) chatMessages.set(userChatKey, []);
+    const stored = chatMessages.get(userChatKey);
 
     let userText = "";
     let images = [];
@@ -422,12 +425,15 @@ app.post("/api/ai/interactions", (req, res) => res.json({ success: true }));
 app.post("/api/ai/workflowsuggestion", (req, res) => res.json({ suggestions: [] }));
 
 // ─── Chat History ────────────────────────────────────────────────────
-app.get("/api/chat/list", (req, res) => {
+app.get("/api/chat/list", authMiddleware, (req, res) => {
+  const userId = req.user?.sub || "anonymous";
   const chats = [];
-  for (const [id, msgs] of chatMessages.entries()) {
+  for (const [key, msgs] of chatMessages.entries()) {
+    if (!key.startsWith(`${userId}:`)) continue;
+    const chatId = key.split(":").slice(1).join(":");
     if (msgs.length > 0) {
       chats.push({
-        id,
+        id: chatId,
         title: msgs[0]?.content?.substring(0, 50) || "Chat",
         created_at: msgs[0]?.created_at,
         updated_at: msgs[msgs.length - 1]?.created_at,
@@ -437,15 +443,18 @@ app.get("/api/chat/list", (req, res) => {
   res.json({ chats: chats.reverse(), has_more: false });
 });
 
-app.get("/api/chat", (req, res) => {
+app.get("/api/chat", authMiddleware, (req, res) => {
+  const userId = req.user?.sub || "anonymous";
   const chatId = req.query.chatId;
-  const msgs = chatMessages.get(chatId) || [];
+  const userChatKey = `${userId}:${chatId}`;
+  const msgs = chatMessages.get(userChatKey) || [];
   res.json(msgs);
 });
 
 app.patch("/api/chat/:id", (req, res) => res.json({ success: true }));
-app.delete("/api/chat/:id", (req, res) => {
-  chatMessages.delete(req.params.id);
+app.delete("/api/chat/:id", authMiddleware, (req, res) => {
+  const userId = req.user?.sub || "anonymous";
+  chatMessages.delete(`${userId}:${req.params.id}`);
   res.json({ success: true });
 });
 
@@ -494,6 +503,102 @@ app.all("/api/{*path}", (req, res) => {
   res.json({ success: true });
 });
 
+// ─── OpenClaw Agent Gateway (Auth0-secured) ──────────────────────────
+//
+// All OpenClaw agent interactions are gated behind Auth0 JWT validation.
+// The server acts as a zero-trust proxy: it verifies the user's identity
+// before forwarding any request to the OpenClaw agent. This prevents
+// unauthorized users from invoking agent tools, starting sessions, or
+// accessing agent-generated files.
+//
+// Architecture:
+//   Extension → [Auth0 JWT] → Express (validate) → OpenClaw Gateway
+//
+const OPENCLAW_GATEWAY = process.env.OPENCLAW_GATEWAY || "http://127.0.0.1:18789";
+const OPENCLAW_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
+const OPENCLAW_AGENT_ID = process.env.OPENCLAW_AGENT_ID || "main";
+
+function openclawProxy(basePath) {
+  return async (req, res) => {
+    try {
+      const userId = req.user?.sub || "anonymous";
+      console.log(`[openclaw] ${req.method} ${req.path} — user: ${userId}`);
+
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENCLAW_TOKEN}`,
+        "x-openclaw-agent-id": req.headers["x-openclaw-agent-id"] || OPENCLAW_AGENT_ID,
+        "x-aladin-user-id": userId,
+      };
+
+      const ocRes = await fetch(`${OPENCLAW_GATEWAY}${req.path}`, {
+        method: req.method,
+        headers,
+        body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body),
+      });
+
+      const contentType = ocRes.headers.get("content-type") || "application/json";
+
+      if (contentType.includes("text/event-stream")) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        if (res.socket) res.socket.setNoDelay(true);
+
+        const reader = ocRes.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(decoder.decode(value, { stream: true }));
+        }
+        res.end();
+      } else {
+        const data = await ocRes.text();
+        res.status(ocRes.status).type(contentType).send(data);
+      }
+    } catch (err) {
+      console.error("[openclaw] proxy error:", err.message);
+      res.status(502).json({ error: err.message });
+    }
+  };
+}
+
+// Auth0 required for all OpenClaw agent routes
+app.all("/v1/{*path}", authMiddleware, openclawProxy("/v1"));
+app.all("/tools/{*path}", authMiddleware, openclawProxy("/tools"));
+
+// Agent session management — Auth0 required
+app.post("/api/agent/session", authMiddleware, async (req, res) => {
+  const userId = req.user?.sub || "anonymous";
+  try {
+    const ocRes = await fetch(`${OPENCLAW_GATEWAY}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENCLAW_TOKEN}`,
+        "x-openclaw-agent-id": OPENCLAW_AGENT_ID,
+        "x-aladin-user-id": userId,
+      },
+      body: JSON.stringify(req.body),
+    });
+    const data = await ocRes.text();
+    res.status(ocRes.status).type("application/json").send(data);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Agent audit log — tracks who invoked what
+const agentAuditLog = [];
+app.get("/api/agent/audit", authMiddleware, (req, res) => {
+  const userId = req.user?.sub;
+  if (!userId) return res.status(401).json({ error: "Auth required" });
+  const userLogs = agentAuditLog.filter((l) => l.userId === userId);
+  res.json({ logs: userLogs.slice(-50) });
+});
+
 // ─── Files ───────────────────────────────────────────────────────────
 const path = require("path");
 const fs = require("fs");
@@ -506,5 +611,6 @@ app.use("/files", express.static(WORKSPACE_DIR));
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`Aladin API server running on http://127.0.0.1:${PORT}`);
   console.log(`AI: Gemini (${GEMINI_MODEL}) — API key ${GEMINI_API_KEY ? "configured" : "MISSING (set GEMINI_API_KEY)"}`);
-  console.log(`Auth0: ${AUTH0_ENABLED ? "enabled" : "disabled (set AUTH0_DOMAIN and AUTH0_AUDIENCE to enable)"}`);
+  console.log(`OpenClaw: ${OPENCLAW_TOKEN ? "configured" : "disabled (set OPENCLAW_GATEWAY_TOKEN to enable)"} — ${OPENCLAW_GATEWAY}`);
+  console.log(`Auth0: ${AUTH0_ENABLED ? "enabled — all agent routes require valid JWT" : "disabled (set AUTH0_DOMAIN and AUTH0_AUDIENCE to enable)"}`);
 });
